@@ -38,7 +38,7 @@ class EMObjects:
         sim.V[:,:,sim.point_space_size[2]-1] = voltage
         
     @staticmethod
-    def rectangular_prism(sim, top_left, lwh, voltage):
+    def rectangular_prism_solid(sim, top_left, lwh, voltage):
         top_left = sim.global_unit_to_point(top_left)
         lwh = sim.global_unit_to_point(lwh)
         sim.V[top_left[0]:lwh[0],top_left[1]:lwh[1],top_left[2]:lwh[2]] = voltage

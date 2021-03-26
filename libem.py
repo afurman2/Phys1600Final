@@ -63,6 +63,10 @@ class EMSimulationSpace(object):
     def global_unit_to_point(self, units):
         return self.unit_to_point([u - self.top_left[i] for i, u in enumerate(units)])
     
+    # Gradient
+    def get_gradient(self):
+        return np.gradient(self.V, 2)
+    
     # Jacobi function
     def jacobi(self):
         return inf
@@ -75,7 +79,7 @@ class EMSimulationSpace(object):
         return dV
     
     # Full computation
-    def compute(self, boundary_enforcer=None, convergence_limit=1e-6, transient_ignore=50):
+    def compute(self, boundary_enforcer=None, convergence_limit=1e-6, transient_ignore=100):
         dV = 10 * convergence_limit
         transient = 0
         while transient < transient_ignore or dV > convergence_limit:
@@ -112,19 +116,20 @@ class EMSimulationSpace2D(EMSimulationSpace):
     # Generate 2d from 3d simulation
     @staticmethod
     def from_3d(sim3d, axis=0, location=0):
-        print("Creating 2D dataset")
         space_size = np.delete(sim3d.space_size, axis)
         top_left = np.delete(sim3d.top_left, axis)
         axis_labels = np.delete(sim3d.axis_names, axis)
         sim2d = EMSimulationSpace2D(space_size, sim3d.scale, top_left, axis_labels)
-        i = 1
-        for point, value in np.ndenumerate(sim3d.V):
-            loc = np.array(sim3d.point_to_global_unit(point))
-            if abs(loc[axis] - location) <= 1.0 / sim3d.scale:
-                loc2d = sim2d.global_unit_to_point(np.delete(loc, axis))
-                sim2d.V[loc2d] = value
-            i += 1
-            print("\r" + str(int(round((i * 100) / sim3d.n_points, 0))) + "%", end="")
+        if axis == 0:
+            loc = sim3d.global_unit_to_point((location, 0, 0))
+            sim2d.V = sim3d.V[loc[0],:,:]
+        elif axis == 1:
+            loc = sim3d.global_unit_to_point((0, location, 0))
+            sim2d.V = sim3d.V[:,loc[1],:]
+        elif axis == 2:
+            loc = sim3d.global_unit_to_point((0, 0, location))
+            sim2d.V = sim3d.V[:,:,loc[2]]
+        else:
+            raise ValueError("Axis must be 0, 1, or 2.")
         sim2d.V_new = np.copy(sim2d.V)
-        print("\rDone.")
         return sim2d
