@@ -1,5 +1,6 @@
 import numpy as np
 from numba import jit
+from scipy.integrate import odeint
 
 # Jacobi computation function (3D)
 @jit
@@ -20,7 +21,7 @@ def jacobi_3d(V, V_new, space, n_points):
 @jit
 def jacobi_2d(V, V_new, space, n_points):
     for point, value in np.ndenumerate(V):
-        if (0 in point) or \
+        if (point[0] == 0 or point[1] == 0) or \
             (point[0] == space[0]-1 or point[1] == space[1]-1):
             V_new[point] = V[point]
         else:
@@ -63,13 +64,18 @@ class EMSimulationSpace(object):
     def global_unit_to_point(self, units):
         return self.unit_to_point([u - self.top_left[i] for i, u in enumerate(units)])
     
-    # Gradient
-    def get_gradient(self):
-        return np.gradient(self.V, 2)
+    # E Field
+    def get_efield(self):
+        self.E = -1 * np.array(np.gradient(self.V, 2))
+        return self.E
     
     # Jacobi function
     def jacobi(self):
         return inf
+    
+    # Get the potential value at a specific location
+    def E_at(self, location):
+        pass
     
     # Computation step
     def compute_step(self, boundary_enforcer=None):
@@ -93,10 +99,31 @@ class EMSimulationSpace3D(EMSimulationSpace):
         if len(space_size) != 3:
             raise ValueError("Space size must be 3D")
         EMSimulationSpace.__init__(self, space_size, scale, top_left, axis_names)
+        self.c = 0
         
     def jacobi(self):
         self.V, dV = jacobi_3d(self.V, self.V_new, self.point_space_size, self.n_points)
         return dV
+    
+    def E_at(self, location):
+        location = np.array(location)
+        i, j, k = self.global_unit_to_point(location)
+        if i == 0 or j == 0 or k == 0 or \
+            i == self.point_space_size[0]-1 or j == self.point_space_size[1]-1 or k == self.point_space_size[2]-1:
+            i = min(max(i, 0), self.point_space_size[0]-1)
+            j = min(max(j, 0), self.point_space_size[1]-1)
+            k = min(max(k, 0), self.point_space_size[2]-1)
+            return self.E[:,i,j,k]
+        E = np.zeros(3, float)
+        for ax in range(3):
+            for close_point, v in np.ndenumerate(self.E[ax,i-1:i+2,j-1:j+2,k-1:k+2]):
+                close_loc = ((np.array(close_point) + np.array([i-1, j-1, k-1])) / self.scale) + self.top_left
+                dist = ((close_loc[0]-location[0])**2 + (close_loc[1]-location[1])**2 + (close_loc[2]-location[2])**2)**0.5
+                print(location, close_loc, dist)
+                E[ax] += (1.0 / dist) * v
+            E[ax] /= 27
+        return E   
+        
 
 class EMSimulationSpace2D(EMSimulationSpace):
     def __init__(self, space_size=(10, 10), scale=10, top_left=(0, 0), axis_names=("x, y")):
@@ -107,6 +134,23 @@ class EMSimulationSpace2D(EMSimulationSpace):
     def jacobi(self):
         self.V, dV = jacobi_2d(self.V, self.V_new, self.point_space_size, self.n_points)
         return dV
+    
+    def E_at(self, location):
+        location = np.array(location)
+        i, j = self.global_unit_to_point(location)
+        if i == 0 or j == 0 or \
+            i == self.point_space_size[0]-1 or j == self.point_space_size[1]-1:
+            i = min(max(i, 0), self.point_space_size[0]-1)
+            j = min(max(j, 0), self.point_space_size[1]-1)
+            return self.E[:,i,j]
+        value = 0
+        E = np.zeros(2, float)
+        for ax in range(2):
+            for close_point, v in np.ndenumerate(self.E[ax,i-1:i+2,j-1:j+2]):
+                dist = np.linalg.norm(((np.array(close_point) + np.array([i-1, j-1])) / self.scale) - location)
+                E[ax] += (1 - dist) * v
+            E[ax] /= 9
+        return E
     
     # Get meshgrid for plotting
     def get_meshgrid(self):
@@ -133,3 +177,49 @@ class EMSimulationSpace2D(EMSimulationSpace):
             raise ValueError("Axis must be 0, 1, or 2.")
         sim2d.V_new = np.copy(sim2d.V)
         return sim2d
+
+class ChargedParticle(object):
+    GRAVITY = 9.8
+    
+    def __init__(self, sim, mass, charge, location, velocity, gravity=-1):
+        """Initialize a charged particle given a simulation space, mass, charge, position, and velocity."""
+        self.sim = sim
+        self.mass = mass
+        self.charge = charge
+        
+        if self.sim.dimensions != len(location):
+            raise ValueError("Simulation space dimensions must match initial condition.")
+        self.initial_location = location
+        self.initial_velocity = velocity
+        
+        self.gravity_axis = gravity
+        
+    # Equation of motion for the particle
+    def eom(self, y, t):
+        pass
+    
+    # Solve equation of motion
+    def compute_motion(self, time_range):
+        return odeint(self.eom, np.ravel([self.initial_location, self.initial_velocity]), time_range, hmax=(1.0 / self.sim.scale))
+    
+
+class ChargedParticle3D(ChargedParticle):
+    def __init__(self, sim, mass, charge, location, velocity, gravity=-1):
+        ChargedParticle.__init__(self, sim, mass, charge, location, velocity, gravity)           
+    
+    def eom(self, y, t):
+        x = np.array([y[0], y[1], y[2]])
+        v = np.array([y[3], y[4], y[5]])
+        if self.gravity_axis > 0:
+            return np.ravel([v, ((self.charge / self.mass) * self.sim.E_at(x)) - ChargedParticle.GRAVITY])
+        return np.ravel([v, (self.charge / self.mass) * self.sim.E_at(x)])
+    
+    def compute_motion(self, time_range):
+        solution = ChargedParticle.compute_motion(self, time_range).T
+        self.position = np.array([solution[0], solution[1], solution[2]])
+        self.velocity = np.array([solution[3], solution[4], solution[5]])
+        self.time = time_range
+        return self.position, self.velocity
+    
+    
+        
