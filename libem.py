@@ -2,35 +2,44 @@ import numpy as np
 from numba import jit
 from scipy.integrate import odeint
 
+GAIN = 1
+
 # Jacobi computation function (3D)
 @jit
-def jacobi_3d(V, V_new, space, n_points):
+def jacobi_3d(V, boundary_mask, space, n_points, scale):
+    dV = 0
+    v_old = 0
     for point, value in np.ndenumerate(V):
         if (point[0] == 0 or point[1] == 0 or point[2] == 0) or \
-            (point[0] == space[0]-1 or point[1]-1 == space[1] or point[2] == space[2]-1):
-            V_new[point] = V[point]
+            (point[0] == space[0]-1 or point[1] == space[1]-1 or point[2] == space[2]-1):
+            continue
         else:
             i, j, k = point
-            V_new[point] = (V[i+1,j,k] + V[i-1,j,k] + 
-                            V[i,j+1,k] + V[i,j-1,k] + 
-                            V[i,j,k+1] + V[i,j,k-1]) / 6
-    dV = np.sum(np.abs(V_new - V)) / n_points
-    return V_new, dV
+            v_old = V[point]
+            V[point] = (V[i+1,j,k] + V[i-1,j,k] + 
+                        V[i,j+1,k] + V[i,j-1,k] + 
+                        V[i,j,k+1] + V[i,j,k-1]) / 6
+            if not boundary_mask[point] == 1:
+                dV = max(dV, abs(V[point] - v_old))
+    return V, dV
 
 # Jacobi computation function (2D)
 @jit
-def jacobi_2d(V, V_new, space, n_points):
+def jacobi_2d(V, boundary_mask, space, n_points, scale):
+    dV = 0
+    v_old = 0
     for point, value in np.ndenumerate(V):
         if (point[0] == 0 or point[1] == 0) or \
             (point[0] == space[0]-1 or point[1] == space[1]-1):
-            V_new[point] = V[point]
+            continue
         else:
             i, j = point
-            V_new[point] = (V[i+1,j] + V[i-1,j] + 
-                            V[i,j+1] + V[i,j-1]) / 4
-    dV = np.sum(np.abs(V_new - V)) / n_points
-    V = np.copy(V_new)
-    return V_new, dV
+            v_old = V[point]
+            V[point] = (V[i+1,j] + V[i-1,j] + 
+                        V[i,j+1] + V[i,j-1]) / 4
+            if not boundary_mask[point] == 1:
+                dV = max(dV, abs(V[point] - v_old))
+    return V, dV
 
 class EMSimulationSpace(object):
     def __init__(self, space_size, scale, top_left, axis_names=None):
@@ -48,7 +57,6 @@ class EMSimulationSpace(object):
         self.n_points = np.prod(self.point_space_size)
         
         self.V = np.zeros([s * self.scale for s in self.space_size])
-        self.V_new = np.copy(self.V)
         
     # Unit conversion functions
     
@@ -85,14 +93,22 @@ class EMSimulationSpace(object):
         return dV
     
     # Full computation
-    def compute(self, boundary_enforcer=None, convergence_limit=1e-6, transient_ignore=100):
+    def compute(self, boundary_enforcer=None, convergence_limit=1e-6, transient_ignore=100, maximum_iter=1e6):
+        self.boundary_mask = np.zeros(self.V.shape, int)
+        if boundary_enforcer != None:
+            self.V = np.full(self.V.shape, np.inf)
+            boundary_enforcer(self)
+            np.isfinite(self.V, self.boundary_mask, where=1)
+            self.V = np.zeros(self.V.shape, float)
+            
         dV = 10 * convergence_limit
         transient = 0
-        while transient < transient_ignore or dV > convergence_limit:
+        while (transient < transient_ignore or dV > convergence_limit) and transient < maximum_iter:
             dV = self.compute_step(boundary_enforcer)
             transient += 1
         print("Computed in", transient, "iterations.")
         return self.V
+    
 
 class EMSimulationSpace3D(EMSimulationSpace):
     def __init__(self, space_size=(10, 10, 10), scale=10, top_left=(0, 0, 0), axis_names=("x", "y", "z")):
@@ -102,7 +118,7 @@ class EMSimulationSpace3D(EMSimulationSpace):
         self.c = 0
         
     def jacobi(self):
-        self.V, dV = jacobi_3d(self.V, self.V_new, self.point_space_size, self.n_points)
+        self.V, dV = jacobi_3d(self.V, self.boundary_mask, self.point_space_size, self.n_points, self.scale)
         return dV
     
     def E_at(self, location):
@@ -116,12 +132,15 @@ class EMSimulationSpace3D(EMSimulationSpace):
             return self.E[:,i,j,k]
         E = np.zeros(3, float)
         for ax in range(3):
+            idsum = 0
             for close_point, v in np.ndenumerate(self.E[ax,i-1:i+2,j-1:j+2,k-1:k+2]):
                 close_loc = ((np.array(close_point) + np.array([i-1, j-1, k-1])) / self.scale) + self.top_left
                 dist = ((close_loc[0]-location[0])**2 + (close_loc[1]-location[1])**2 + (close_loc[2]-location[2])**2)**0.5
-                print(location, close_loc, dist)
+                if dist < 1e-6:
+                    return self.E[:,close_point[0],close_point[1],close_point[2]]
+                idsum += 1.0 / dist
                 E[ax] += (1.0 / dist) * v
-            E[ax] /= 27
+            E[ax] /= (idsum * 27)
         return E   
         
 
@@ -132,7 +151,7 @@ class EMSimulationSpace2D(EMSimulationSpace):
         EMSimulationSpace.__init__(self, space_size, scale, top_left, axis_names)
         
     def jacobi(self):
-        self.V, dV = jacobi_2d(self.V, self.V_new, self.point_space_size, self.n_points)
+        self.V, dV = jacobi_2d(self.V, self.boundary_mask, self.point_space_size, self.n_points)
         return dV
     
     def E_at(self, location):
@@ -175,7 +194,6 @@ class EMSimulationSpace2D(EMSimulationSpace):
             sim2d.V = sim3d.V[:,:,loc[2]]
         else:
             raise ValueError("Axis must be 0, 1, or 2.")
-        sim2d.V_new = np.copy(sim2d.V)
         return sim2d
 
 class ChargedParticle(object):
