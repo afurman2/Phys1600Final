@@ -221,3 +221,19 @@ class Visualizations:
         
         if graph_ax is None:
             plt.show()
+            
+    @staticmethod
+    def trajectory_2d(time, x3d, axis=0, size=(10, 10), graph_ax=None):
+        ax = None
+        if graph_ax is None:
+            plt.figure(figsize=size)
+            ax = plt.gca()
+        else:
+            ax = graph_ax
+                    
+        x = np.delete(x3d, axis, axis=0)
+        
+        ax.scatter(x[0], x[1], c=time, cmap="Greens")
+        
+        if graph_ax is None:
+            plt.show()
