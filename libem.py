@@ -117,7 +117,6 @@ class EMSimulationSpace(object):
                 if self.boundary_mask[self.global_unit_to_point(position + step)] == 1:
                     return_v[axis] = -velocity[axis]
             except (IndexError, ValueError):
-                print("Cannot extrapolate along axis", axis, "to point", position, "+", step )
                 return np.zeros(len(velocity), float)
         return return_v
     
@@ -136,8 +135,8 @@ class EMSimulationSpace3D(EMSimulationSpace):
     def E_at(self, location):
         location = np.array(location)
         i, j, k = self.global_unit_to_point(location)
-        if i == 0 or j == 0 or k == 0 or \
-            i == self.point_space_size[0]-1 or j == self.point_space_size[1]-1 or k == self.point_space_size[2]-1:
+        if i <= 1 or j <= 1 or k <= 1 or \
+            i >= self.point_space_size[0]-2 or j >= self.point_space_size[1]-2 or k >= self.point_space_size[2]-2:
             i = min(max(i, 0), self.point_space_size[0]-1)
             j = min(max(j, 0), self.point_space_size[1]-1)
             k = min(max(k, 0), self.point_space_size[2]-1)
@@ -176,8 +175,8 @@ class EMSimulationSpace2D(EMSimulationSpace):
     def E_at(self, location):
         location = np.array(location)
         i, j = self.global_unit_to_point(location)
-        if i == 0 or j == 0 or \
-            i == self.point_space_size[0]-1 or j == self.point_space_size[1]-1:
+        if i <= 1 or j <= 1 or \
+            i >= self.point_space_size[0]-2 or j >= self.point_space_size[1]-2:
             i = min(max(i, 0), self.point_space_size[0]-1)
             j = min(max(j, 0), self.point_space_size[1]-1)
             return self.E[:,i,j]
@@ -301,13 +300,17 @@ class ChargedParticle3D(ChargedParticle):
         velocity_partial = []
         
         while total_time < t_span[1]:
-            p_res = ChargedParticle.compute_motion(self, (total_time, t_span[1]))
-            time_partial.append(p_res.t)
-            position_partial.append(np.array([p_res.y[0], p_res.y[1], p_res.y[2]]))
-            velocity_partial.append(np.array([p_res.y[3], p_res.y[4], p_res.y[5]]))
-            total_time = p_res.t[-1]
-            self.initial_velocity = self.bounce_velocity
-            self.initial_location = self.bounce_position
+            try:
+                p_res = ChargedParticle.compute_motion(self, (total_time, t_span[1]))
+                time_partial.append(p_res.t)
+                position_partial.append(np.array([p_res.y[0], p_res.y[1], p_res.y[2]]))
+                velocity_partial.append(np.array([p_res.y[3], p_res.y[4], p_res.y[5]]))
+                total_time = p_res.t[-1]
+                self.initial_velocity = self.bounce_velocity
+                self.initial_location = self.bounce_position
+            except Exception:
+                print("Exception occured during time step", (total_time, t_span[1]))
+                break
             
         self.time = np.concatenate(time_partial)
         self.position = np.concatenate(position_partial, axis=1)
