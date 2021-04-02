@@ -1,8 +1,6 @@
 import numpy as np
 from numba import jit
-from scipy.integrate import odeint
-
-GAIN = 1
+from scipy.integrate import solve_ivp
 
 # Jacobi computation function (3D)
 @jit
@@ -64,10 +62,10 @@ class EMSimulationSpace(object):
         return tuple([p / self.scale for p in point])
     
     def point_to_global_unit(self, point):
-        return tuple([self.top_left[i] + p for i, p in enumerate(self.point_to_unit(point))])
+        return tuple([self.top_left[i] + (p / self.scale) for i, p in enumerate(point)])
     
     def unit_to_point(self, units):
-        return tuple([int(u * self.scale) for u in units])
+        return tuple([round(u * self.scale) for u in units])
     
     def global_unit_to_point(self, units):
         return self.unit_to_point([u - self.top_left[i] for i, u in enumerate(units)])
@@ -109,6 +107,20 @@ class EMSimulationSpace(object):
         print("Computed in", transient, "iterations.")
         return self.V
     
+    # Detect hit of solid object
+    def detect_hit(self, position, velocity, radius=0):
+        return_v = np.zeros(len(velocity), float)
+        for axis, component in enumerate(velocity):
+            step = np.zeros(len(velocity), float)
+            step[axis] = radius + (velocity[axis] / self.scale)
+            try:
+                if self.boundary_mask[self.global_unit_to_point(position + step)] == 1:
+                    return_v[axis] = -velocity[axis]
+            except (IndexError, ValueError):
+                print("Cannot extrapolate along axis", axis, "to point", position, "+", step )
+                return np.zeros(len(velocity), float)
+        return return_v
+    
 
 class EMSimulationSpace3D(EMSimulationSpace):
     def __init__(self, space_size=(10, 10, 10), scale=10, top_left=(0, 0, 0), axis_names=("x", "y", "z")):
@@ -130,18 +142,25 @@ class EMSimulationSpace3D(EMSimulationSpace):
             j = min(max(j, 0), self.point_space_size[1]-1)
             k = min(max(k, 0), self.point_space_size[2]-1)
             return self.E[:,i,j,k]
+                
         E = np.zeros(3, float)
-        for ax in range(3):
-            idsum = 0
-            for close_point, v in np.ndenumerate(self.E[ax,i-1:i+2,j-1:j+2,k-1:k+2]):
-                close_loc = ((np.array(close_point) + np.array([i-1, j-1, k-1])) / self.scale) + self.top_left
-                dist = ((close_loc[0]-location[0])**2 + (close_loc[1]-location[1])**2 + (close_loc[2]-location[2])**2)**0.5
-                if dist < 1e-6:
-                    return self.E[:,close_point[0],close_point[1],close_point[2]]
-                idsum += 1.0 / dist
-                E[ax] += (1.0 / dist) * v
-            E[ax] /= (idsum * 27)
-        return E   
+        inv_dist_sum = 0
+        
+        values = np.copy(self.E[:,i-1:i+2,j-1:j+2,k-1:k+2])
+        close_points = np.indices(values.shape[1:])
+        close_points[:,:,:] += np.array([i-1, j-1, k-1])
+        close_locations = (close_points / self.scale) + self.top_left
+        
+        distances = np.sum((close_locations[:,:,:] - location)**2, axis=0)**0.5
+        immediate_neighbor = np.argwhere(distances < 1e-6)
+        if len(immediate_neighbor) > 0:
+            close_point = close_points[immediate_neighbor[0][0],immediate_neighbor[0][1],immediate_neighbor[0][2]]
+            return self.E[:,close_point[0],close_point[1],close_point[2]]
+        
+        distances = 1.0 / distances
+        values *= distances
+                        
+        return np.sum(values, axis=(1, 2, 3)) / (np.sum(distances) * distances.size)
         
 
 class EMSimulationSpace2D(EMSimulationSpace):
@@ -153,7 +172,7 @@ class EMSimulationSpace2D(EMSimulationSpace):
     def jacobi(self):
         self.V, dV = jacobi_2d(self.V, self.boundary_mask, self.point_space_size, self.n_points)
         return dV
-    
+        
     def E_at(self, location):
         location = np.array(location)
         i, j = self.global_unit_to_point(location)
@@ -162,14 +181,25 @@ class EMSimulationSpace2D(EMSimulationSpace):
             i = min(max(i, 0), self.point_space_size[0]-1)
             j = min(max(j, 0), self.point_space_size[1]-1)
             return self.E[:,i,j]
-        value = 0
+        
         E = np.zeros(2, float)
-        for ax in range(2):
-            for close_point, v in np.ndenumerate(self.E[ax,i-1:i+2,j-1:j+2]):
-                dist = np.linalg.norm(((np.array(close_point) + np.array([i-1, j-1])) / self.scale) - location)
-                E[ax] += (1 - dist) * v
-            E[ax] /= 9
-        return E
+        inv_dist_sum = 0
+        
+        values = np.copy(self.E[:,i-1:i+2,j-1:j+2])
+        close_points = np.indices(values.shape[1:])
+        close_points[:,:] += np.array([i-1, j-1])
+        close_locations = (close_points / self.scale) + self.top_left
+        
+        distances = np.sum((close_locations[:,:] - location)**2, axis=0)**0.5
+        immediate_neighbor = np.argwhere(distances < 1e-6)
+        if len(immediate_neighbor) > 0:
+            close_point = close_points[immediate_neighbor[0][0],immediate_neighbor[0][1]]
+            return self.E[:,close_point[0],close_point[1]]
+        
+        distances = 1.0 / distances
+        values *= distances
+        
+        return np.sum(values) / (np.sum(distances) * distances.size)
     
     # Get meshgrid for plotting
     def get_meshgrid(self):
@@ -199,44 +229,92 @@ class EMSimulationSpace2D(EMSimulationSpace):
 class ChargedParticle(object):
     GRAVITY = 9.8
     
-    def __init__(self, sim, mass, charge, location, velocity, gravity=-1):
+    def __init__(self, sim, mass, charge, location, velocity, radius=0, gravity=-1, bounce=None):
         """Initialize a charged particle given a simulation space, mass, charge, position, and velocity."""
         self.sim = sim
         self.mass = mass
         self.charge = charge
+        self.radius = radius
         
         if self.sim.dimensions != len(location):
             raise ValueError("Simulation space dimensions must match initial condition.")
         self.initial_location = location
         self.initial_velocity = velocity
         
-        self.gravity_axis = gravity
+        self.gravity = np.zeros(self.sim.dimensions, float)
+        if gravity != -1:
+            self.gravity[gravity] = ChargedParticle.GRAVITY
+        self.bounce = bounce
+        
+    @staticmethod
+    def make_terminating_function(method):
+        def runner(t, y):
+            return method(t, y)
+        runner.terminal = True
+        return runner
         
     # Equation of motion for the particle
-    def eom(self, y, t):
+    def eom(self, t, y):
         pass
     
+    # Event to detect collisons
+    def collision_event(self, t, y):
+        return -1.0
+    
     # Solve equation of motion
-    def compute_motion(self, time_range):
-        return odeint(self.eom, np.ravel([self.initial_location, self.initial_velocity]), time_range, hmax=(1.0 / self.sim.scale))
+    def compute_motion(self, t_span):
+        term_event = ChargedParticle.make_terminating_function(self.collision_event)
+        return solve_ivp(self.eom, t_span,
+                         y0=np.ravel([self.initial_location, self.initial_velocity]),
+                         method="DOP853", max_step=(1.0 / self.sim.scale),
+                         events=([term_event] if not self.bounce is None else []))
     
 
 class ChargedParticle3D(ChargedParticle):
-    def __init__(self, sim, mass, charge, location, velocity, gravity=-1):
-        ChargedParticle.__init__(self, sim, mass, charge, location, velocity, gravity)           
-    
-    def eom(self, y, t):
+    def __init__(self, sim, mass, charge, location, velocity, radius=0, gravity=-1, bounce=None):
+        ChargedParticle.__init__(self, sim, mass, charge, location, velocity, radius, gravity, bounce)
+        self.bounce_velocity = None
+        self.bounce_position = None
+        
+    def collision_event(self, t, y):
         x = np.array([y[0], y[1], y[2]])
         v = np.array([y[3], y[4], y[5]])
-        if self.gravity_axis > 0:
-            return np.ravel([v, ((self.charge / self.mass) * self.sim.E_at(x)) - ChargedParticle.GRAVITY])
-        return np.ravel([v, (self.charge / self.mass) * self.sim.E_at(x)])
+        hit_v = self.sim.detect_hit(x, v, self.radius)
+        if hit_v.any():
+            self.bounce_velocity = v + 2 * (hit_v * self.bounce)
+            self.bounce_position = x
+            return 1.0
+        return -1.0
     
-    def compute_motion(self, time_range):
-        solution = ChargedParticle.compute_motion(self, time_range).T
-        self.position = np.array([solution[0], solution[1], solution[2]])
-        self.velocity = np.array([solution[3], solution[4], solution[5]])
-        self.time = time_range
+    def eom(self, t, y):
+        x = np.array([y[0], y[1], y[2]])
+        v = np.array([y[3], y[4], y[5]])
+        return np.ravel([v, ((self.charge / self.mass) * self.sim.E_at(x)) - self.gravity])
+    
+    def compute_motion(self, t_span):        
+        initial_v = np.copy(self.initial_velocity)
+        initial_l = np.copy(self.initial_location)
+        
+        total_time = t_span[0]
+        time_partial = []
+        position_partial = []
+        velocity_partial = []
+        
+        while total_time < t_span[1]:
+            p_res = ChargedParticle.compute_motion(self, (total_time, t_span[1]))
+            time_partial.append(p_res.t)
+            position_partial.append(np.array([p_res.y[0], p_res.y[1], p_res.y[2]]))
+            velocity_partial.append(np.array([p_res.y[3], p_res.y[4], p_res.y[5]]))
+            total_time = p_res.t[-1]
+            self.initial_velocity = self.bounce_velocity
+            self.initial_location = self.bounce_position
+            
+        self.time = np.concatenate(time_partial)
+        self.position = np.concatenate(position_partial, axis=1)
+        self.velocity = np.concatenate(velocity_partial, axis=1)
+        self.initial_velocity = initial_v
+        self.initial_location = initial_l
+        
         return self.position, self.velocity
     
     

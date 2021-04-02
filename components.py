@@ -72,3 +72,30 @@ class EMObjects:
             sim.V[top_left[0]:top_left[0]+lwh[0],top_left[1]:top_left[1]+lwh[1],top_left[2]:top_left[2]+lwh[2]] = voltage
             sim.V[top_left[0]+th:top_left[0]+lwh[0]-th,top_left[1]+th:top_left[1]+lwh[1]-th,top_left[2]:top_left[2]+lwh[2]] = inside
             
+    @staticmethod
+    def planar_mesh_3d(sim, top_left, mesh_axis, dims, spacing, thickness, voltage):
+        top_left = sim.global_unit_to_point(top_left)
+        dims = sim.unit_to_point(dims)
+        spacing = (max(int(spacing[0] * sim.scale), 1), max(int(spacing[1] * sim.scale), 1))
+        thickness = max(int(thickness * sim.scale), 1)
+        
+        region = sim.V[top_left[0]:top_left[0]+dims[0],top_left[1]:top_left[1]+dims[1],top_left[2]:top_left[2]+dims[2]]
+        
+        if mesh_axis == 0:
+            for i in range(0, (dims[1] // spacing[0]) + 1):
+                region[:,(i * spacing[0]):(i * spacing[0])+thickness,:] = voltage
+            for j in range(0, (dims[1] // spacing[1]) + 1):
+                region[:,:,(j * spacing[1]):(j * spacing[1])+thickness] = voltage
+        elif mesh_axis == 1:
+            for i in range(0, (dims[0] // spacing[0]) + 1):
+                region[(i * spacing[0]):(i * spacing[0])+thickness,:,:] = voltage
+            for j in range(0, (dims[2] // spacing[1]) + 1):
+                region[:,:,(j * spacing[1]):(j * spacing[1])+thickness] = voltage
+        elif mesh_axis == 2:
+            for i in range(0, (dims[0] // spacing[0]) + 1):
+                region[:,(i * spacing[0]):(i * spacing[0])+thickness,:] = voltage
+            for j in range(0, (dims[1] // spacing[1]) + 1):
+                region[(j * spacing[1]):(j * spacing[1])+thickness,:,:] = voltage
+        
+        
+            
