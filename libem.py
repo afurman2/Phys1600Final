@@ -329,7 +329,7 @@ class ChargedParticle3D(ChargedParticle):
                 velocity_partial.append(np.array([p_res.y[3], p_res.y[4], p_res.y[5]]))
                 total_time = p_res.t[-1]
                 self.initial_velocity = self.bounce_velocity
-                self.initial_location = velocity_partial[-1][:,-1]
+                self.initial_location = position_partial[-1][:,-1]
             except Exception as e:
                 print("Exception occured during time step", (total_time, t_span[1]), ":", e)
                 break
