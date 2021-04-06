@@ -56,6 +56,27 @@ class EMSimulationSpace(object):
         
         self.V = np.zeros([s * self.scale for s in self.space_size])
         
+    # Load from save
+    @staticmethod
+    def load(filepath):
+        data = np.load(filepath, allow_pickle=True)
+        space = None
+        if len(data[0]) == 3:
+            space = EMSimulationSpace3D(data[0], data[1], data[2], data[3])
+        elif len(data[0]) == 2:
+            space = EMSimulationSpace2D(data[0], data[1], data[2], data[3])
+        else:
+            space = EMSimulationSpace(data[0], data[1], data[2], data[3])
+        space.V = data[4]
+        space.boundary_mask = data[5]
+        space.get_efield()
+        return space
+        
+    # Save
+    def save(self, filepath):
+        np.save(filepath, np.array([self.space_size, self.scale, self.top_left, self.axis_names,
+                                    self.V, self.boundary_mask], dtype=object))
+        
     # Unit conversion functions
     
     def point_to_unit(self, point):
@@ -261,19 +282,21 @@ class ChargedParticle(object):
         return -1.0
     
     # Solve equation of motion
-    def compute_motion(self, t_span):
+    def compute_motion(self, t_span, stop_cond=None):
         term_event = ChargedParticle.make_terminating_function(self.collision_event)
+        if not stop_cond is None:
+            stop_cond = ChargedParticle.make_terminating_function(stop_cond)
+        stop_events = ([term_event] if not self.bounce is None else []) + ([stop_cond] if not stop_cond is None else [])
         return solve_ivp(self.eom, t_span,
                          y0=np.ravel([self.initial_location, self.initial_velocity]),
                          method="DOP853", max_step=(1.0 / self.sim.scale),
-                         events=([term_event] if not self.bounce is None else []))
+                         events=stop_events)
     
 
 class ChargedParticle3D(ChargedParticle):
     def __init__(self, sim, mass, charge, location, velocity, radius=0, gravity=-1, bounce=None):
         ChargedParticle.__init__(self, sim, mass, charge, location, velocity, radius, gravity, bounce)
         self.bounce_velocity = None
-        self.bounce_position = None
         
     def collision_event(self, t, y):
         x = np.array([y[0], y[1], y[2]])
@@ -281,7 +304,6 @@ class ChargedParticle3D(ChargedParticle):
         hit_v = self.sim.detect_hit(x, v, self.radius)
         if hit_v.any():
             self.bounce_velocity = v + 2 * (hit_v * self.bounce)
-            self.bounce_position = x
             return 1.0
         return -1.0
     
@@ -307,9 +329,9 @@ class ChargedParticle3D(ChargedParticle):
                 velocity_partial.append(np.array([p_res.y[3], p_res.y[4], p_res.y[5]]))
                 total_time = p_res.t[-1]
                 self.initial_velocity = self.bounce_velocity
-                self.initial_location = self.bounce_position
-            except Exception:
-                print("Exception occured during time step", (total_time, t_span[1]))
+                self.initial_location = velocity_partial[-1][:,-1]
+            except Exception as e:
+                print("Exception occured during time step", (total_time, t_span[1]), ":", e)
                 break
             
         self.time = np.concatenate(time_partial)
