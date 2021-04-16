@@ -4,6 +4,9 @@ import numpy as np
 import libem
 from numba import jit, float64
 
+V_COLORS = "RdBu"#"inferno"
+T_COLORS = "Greens"
+
 class Visualizations: 
     @staticmethod
     @jit
@@ -62,7 +65,7 @@ class Visualizations:
             print("Set visualization resolution to", resolution)
         x, y, z, values = Visualizations.get_3d_vis_data(sim.V, sim.scale, sim.top_left, resolution)
 
-        cmap = plt.cm.RdBu
+        cmap = plt.cm.RdBu if V_COLORS == "RdBu" else plt.cm.inferno
         custom_cmap = cmap(np.arange(cmap.N))
         custom_cmap[:,-1] = np.concatenate((np.linspace(1, 0, cmap.N // 2), np.linspace(0, 1, cmap.N // 2)))
         custom_cmap = ListedColormap(custom_cmap)
@@ -116,9 +119,9 @@ class Visualizations:
             if color_norm == "auto":
                 flat_V = sim.V.flatten()
                 color_norm = abs(max(abs(max(flat_V)), abs(min(flat_V))))
-            ax.pcolormesh(x, y, sim.V.T, cmap="RdBu", shading="auto", vmin=-color_norm, vmax=color_norm)
+            ax.pcolormesh(x, y, sim.V.T, cmap=V_COLORS, shading="auto", vmin=-color_norm, vmax=color_norm)
         else:
-            ax.pcolormesh(x, y, sim.V.T, cmap="RdBu", shading="auto")
+            ax.pcolormesh(x, y, sim.V.T, cmap=V_COLORS, shading="auto")
         
         if graph_ax is None:
             ax.set_xlabel(sim.axis_names[0])
@@ -217,7 +220,7 @@ class Visualizations:
         else:
             ax = graph_ax
         
-        ax.scatter(x[0], x[1], x[2], c=time, cmap="Greens")
+        ax.scatter(x[0], x[1], x[2], c=time, cmap=T_COLORS)
         
         if graph_ax is None:
             plt.show()
@@ -233,7 +236,7 @@ class Visualizations:
                     
         x = np.delete(x3d, axis, axis=0)
         
-        ax.scatter(x[0], x[1], c=time, cmap="Greens")
+        ax.scatter(x[0], x[1], c=time, cmap=T_COLORS)
         
         if graph_ax is None:
             plt.show()

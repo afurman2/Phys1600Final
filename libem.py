@@ -93,7 +93,7 @@ class EMSimulationSpace(object):
     
     # E Field
     def get_efield(self):
-        self.E = -1 * np.array(np.gradient(self.V, 2))
+        self.E = -1 * np.array(np.gradient(self.V, 1.0 / self.scale, edge_order=2))
         return self.E
     
     # Jacobi function
@@ -163,25 +163,22 @@ class EMSimulationSpace3D(EMSimulationSpace):
             j = min(max(j, 0), self.point_space_size[1]-1)
             k = min(max(k, 0), self.point_space_size[2]-1)
             return self.E[:,i,j,k]
+        
+        if np.linalg.norm(location - np.array(self.point_to_global_unit((i, j, k)))) < 1e-4:
+            return self.E[:,i,j,k]
                 
         E = np.zeros(3, float)
-        inv_dist_sum = 0
         
         values = np.copy(self.E[:,i-1:i+2,j-1:j+2,k-1:k+2])
-        close_points = np.indices(values.shape[1:])
+        close_points = np.indices(values.shape[1:]).astype(float)
         close_points[:,:,:] += np.array([i-1, j-1, k-1])
         close_locations = (close_points / self.scale) + self.top_left
         
-        distances = np.sum((close_locations[:,:,:] - location)**2, axis=0)**0.5
-        immediate_neighbor = np.argwhere(distances < 1e-6)
-        if len(immediate_neighbor) > 0:
-            close_point = close_points[immediate_neighbor[0][0],immediate_neighbor[0][1],immediate_neighbor[0][2]]
-            return self.E[:,close_point[0],close_point[1],close_point[2]]
+        inv_distances = 1.0 / np.linalg.norm(location - close_locations[:,:,:], axis=3)
         
-        distances = 1.0 / distances
-        values *= distances
+        values *= inv_distances
                         
-        return np.sum(values, axis=(1, 2, 3)) / (np.sum(distances) * distances.size)
+        return np.sum(values, axis=(1, 2, 3)) / np.sum(inv_distances)
         
 
 class EMSimulationSpace2D(EMSimulationSpace):
@@ -203,24 +200,21 @@ class EMSimulationSpace2D(EMSimulationSpace):
             j = min(max(j, 0), self.point_space_size[1]-1)
             return self.E[:,i,j]
         
+        if np.linalg.norm(location - np.array(self.point_to_global_unit((i, j)))) < 1e-4:
+            return self.E[:,i,j]
+                
         E = np.zeros(2, float)
-        inv_dist_sum = 0
         
         values = np.copy(self.E[:,i-1:i+2,j-1:j+2])
-        close_points = np.indices(values.shape[1:])
+        close_points = np.indices(values.shape[1:]).astype(float)
         close_points[:,:] += np.array([i-1, j-1])
         close_locations = (close_points / self.scale) + self.top_left
         
-        distances = np.sum((close_locations[:,:] - location)**2, axis=0)**0.5
-        immediate_neighbor = np.argwhere(distances < 1e-6)
-        if len(immediate_neighbor) > 0:
-            close_point = close_points[immediate_neighbor[0][0],immediate_neighbor[0][1]]
-            return self.E[:,close_point[0],close_point[1]]
+        inv_distances = 1.0 / np.linalg.norm(location - close_locations[:,:], axis=2)
         
-        distances = 1.0 / distances
-        values *= distances
-        
-        return np.sum(values) / (np.sum(distances) * distances.size)
+        values *= inv_distances
+                        
+        return np.sum(values, axis=(1, 2)) / np.sum(inv_distances)
     
     # Get meshgrid for plotting
     def get_meshgrid(self):
@@ -250,11 +244,11 @@ class EMSimulationSpace2D(EMSimulationSpace):
 class ChargedParticle(object):
     GRAVITY = 9.8
     
-    def __init__(self, sim, mass, charge, location, velocity, radius=0, gravity=-1, bounce=None):
+    def __init__(self, sim, mass, charge, location, velocity, radius=0, gravity=-1, bounce=None, track_force=False):
         """Initialize a charged particle given a simulation space, mass, charge, position, and velocity."""
         self.sim = sim
         self.mass = mass
-        self.charge = charge * 738
+        self.charge = charge
         self.radius = radius
         
         if self.sim.dimensions != len(location):
@@ -266,6 +260,7 @@ class ChargedParticle(object):
         if gravity != -1:
             self.gravity[gravity] = ChargedParticle.GRAVITY
         self.bounce = bounce
+        self.track_force = track_force
         
     @staticmethod
     def make_terminating_function(method):
@@ -290,13 +285,13 @@ class ChargedParticle(object):
         stop_events = ([term_event] if not self.bounce is None else []) + ([stop_cond] if not stop_cond is None else [])
         return solve_ivp(self.eom, t_span,
                          y0=np.ravel([self.initial_location, self.initial_velocity]),
-                         method="DOP853", max_step=(1.0 / self.sim.scale),
+                         method="DOP853", max_step=(min(self.sim.space_size) / 10.0),
                          events=stop_events)
     
 
 class ChargedParticle3D(ChargedParticle):
-    def __init__(self, sim, mass, charge, location, velocity, radius=0, gravity=-1, bounce=None):
-        ChargedParticle.__init__(self, sim, mass, charge, location, velocity, radius, gravity, bounce)
+    def __init__(self, sim, mass, charge, location, velocity, radius=0, gravity=-1, bounce=None, track_force=False):
+        ChargedParticle.__init__(self, sim, mass, charge, location, velocity, radius, gravity, bounce, track_force)
         self.bounce_velocity = None
         self.num_bounces = 0
         
@@ -312,11 +307,17 @@ class ChargedParticle3D(ChargedParticle):
     def eom(self, t, y):
         x = np.array([y[0], y[1], y[2]])
         v = np.array([y[3], y[4], y[5]])
-        return np.ravel([v, ((self.charge / self.mass) * self.sim.E_at(x)) - self.gravity])
+        F = ((self.charge / self.mass) * self.sim.E_at(x)) - self.gravity
+        if self.track_force and not t in self.force:
+            self.force[t] = F
+        return np.ravel([v, F])
     
     def compute_motion(self, t_span):        
         initial_v = np.copy(self.initial_velocity)
         initial_l = np.copy(self.initial_location)
+        
+        if self.track_force:
+            self.force = {}
         
         total_time = t_span[0]
         time_partial = []
@@ -341,10 +342,25 @@ class ChargedParticle3D(ChargedParticle):
         self.time = np.concatenate(time_partial)
         self.position = np.concatenate(position_partial, axis=1)
         self.velocity = np.concatenate(velocity_partial, axis=1)
+        if self.track_force:
+            self.force = np.stack([self.force[t] for t in self.time], axis=0)
         self.initial_velocity = initial_v
         self.initial_location = initial_l
         
         return self.position, self.velocity
     
-    
+    @staticmethod
+    def generate_particles(n, sim, m_avg, q_avg, l0_avg, v0_avg,
+                              m_std=0, q_std=0, l0_std=(0, 0, 0), v0_std=(0, 0, 0),
+                               bounce_coef=None, track_f=False):
+        particles = []
+        for _ in range(n):
+            mass = np.random.normal(loc=m_avg, scale=m_std)
+            charge = np.random.normal(loc=q_avg, scale=q_std)
+            loc = [np.random.normal(loc=l0_avg[i], scale=l0_std[i]) for i in range(len(l0_avg))]
+            vel = [np.random.normal(loc=v0_avg[i], scale=v0_std[i]) for i in range(len(v0_avg))]
+            
+            particles.append(ChargedParticle3D(sim, mass, charge, loc, vel, bounce=bounce_coef, track_force=track_f))
+            
+        return particles
         
