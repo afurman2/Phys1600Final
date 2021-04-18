@@ -256,7 +256,7 @@ class ChargedParticle(object):
         self.initial_location = np.array(location)
         self.initial_velocity = np.array(velocity)
         
-        self.gravity = np.zeros(self.sim.dimensions, float)
+        self.gravity = np.zeros(len(location), float)
         if gravity != -1:
             self.gravity[gravity] = ChargedParticle.GRAVITY
         self.bounce = bounce
