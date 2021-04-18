@@ -251,8 +251,6 @@ class ChargedParticle(object):
         self.charge = charge
         self.radius = radius
         
-        if self.sim.dimensions != len(location):
-            raise ValueError("Simulation space dimensions must match initial condition.")
         self.initial_location = np.array(location)
         self.initial_velocity = np.array(velocity)
         

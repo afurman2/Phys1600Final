@@ -4,6 +4,9 @@ import numpy as np
 import libem
 from numba import jit, float64
 
+import os
+from shutil import rmtree
+
 V_COLORS = "RdBu"#"inferno"
 T_COLORS = "Greens"
 
@@ -240,3 +243,33 @@ class Visualizations:
         
         if graph_ax is None:
             plt.show()
+            
+class VideoMaker(object):
+    def __init__(self, figure, axes, videoDir=None, framerate=1):
+        self.fig = figure
+        self.axes = np.array(axes)
+        self.framerate = framerate
+        
+        self.curr_frame = -1
+        
+        self.videoDir = "video_tmp" if videoDir is None else videoDir
+        if os.path.exists(self.videoDir):
+            rmtree(self.videoDir)
+        os.mkdir(self.videoDir)
+        
+    def new_frame(self):
+        self.curr_frame += 1
+        for axis in self.axes.flatten():
+            axis.clear()
+            
+    def draw_frame(self, save=True):
+        self.fig.canvas.draw()
+        if save:
+            plt.savefig(os.path.join(self.videoDir, "frame{:03d}.png".format(self.curr_frame)))
+        
+    def make_movie(self, name="movie.mp4"):
+        cwd = os.getcwd()
+        os.chdir(self.videoDir)
+        os.system("ffmpeg -framerate {} -i frame%03d.png -r 24 -pix_fmt yuv420p {}".format(self.framerate, name))
+        os.chdir(cwd)
+        
