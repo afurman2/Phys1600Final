@@ -223,4 +223,32 @@ class EMObjectMasks:
                 point = np.array([radius * np.cos(angle) + center[0], radius * np.sin(angle) + center[1]]).astype(int)
                 mask[point[0]-ht:point[0]+ht,point[1]-ht:point[1]+ht,cyl_start:cyl_end] = 1
         return mask
+    
+    @staticmethod
+    def closed_cylinder_in_plane(sim, center, radius, length, axis, direction=1):
+        """
+        Create a mask representing a filled circular cylinder aligned with a plane.
+        The cylinder is at <center> with <radius>.
+        The <length> of the cylinder extends in the sign of <direction> from the <center> along <axis>.
+        Returns a numpy array of the same size as sim.V with 1s in the locations of the cylinder.
+        """
+        mask = np.zeros(sim.V.shape, int)
+        
+        radius = round(radius * sim.scale)
+        length = round(length * sim.scale)
+        center = sim.global_unit_to_point(center)
+
+        cyl_start = center[axis] if direction == 1 else center[axis] - length
+        cyl_end = center[axis] + length if direction == 1 else center[axis]
+        
+        for xsec in np.arange(-radius, radius+1, 1):
+            hwidth = round(((radius**2) - (xsec**2))**0.5)
+            if axis == 0:
+                mask[cyl_start:cyl_end,center[1]-hwidth:center[1]+hwidth,center[2]+xsec] = 1
+            elif axis == 1:
+                mask[center[0]-hwidth:center[0]+hwidth,cyl_start:cyl_end,center[2]+xsec] = 1
+            elif axis == 2:
+                mask[center[0]-hwidth:center[0]+hwidth,center[1]+xsec,cyl_start:cyl_end] = 1
+        
+        return mask
             
