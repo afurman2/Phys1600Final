@@ -2,60 +2,71 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 import numpy as np
 import libem
-from numba import jit, float64
 
 import os
 from shutil import rmtree
+
+"""
+The Electrodynamics Simulation Library libvis.py
+Author: Adam Furman
+Brown University
+
+Provides methods of visualizing electrodynamics simulations.
+"""
 
 V_COLORS = "RdBu"#"inferno"
 T_COLORS = "Greens"
 
 class Visualizations: 
     @staticmethod
-    @jit
     def get_3d_vis_data(V, scale, top_left, resolution=1):
-        x = np.zeros(V.size, float64)
-        y = np.zeros(V.size, float64)
-        z = np.zeros(V.size, float64)
-        values = np.zeros(V.size, float64)
-        sample = 1
-        n = 0
-        for i in range(V.shape[0]):
-            for j in range(V.shape[1]):
-                for k in range(V.shape[2]):
-                    if sample >= resolution:
-                        x[n] = top_left[0] + (i / scale)
-                        y[n] = top_left[1] + (j / scale)
-                        z[n] = top_left[2] + (k / scale)
-                        values[n] = V[i,j,k]
-                        sample = 1
-                    else:
-                        sample += 1
-                    n += 1        
-        return x, y, z, values
+        """
+        Pull a subset of points from the array V to use in a 3D visualization.
+        """
+        x = []
+        y = []
+        z = []
+        values = []
+        
+        for pt, value in np.ndenumerate(V[::resolution,::resolution,::resolution]):
+            loc = ((np.array(pt) * resolution) / scale) + top_left
+            x.append(loc[0])
+            y.append(loc[1])
+            z.append(loc[2])
+            values.append(value)
+        
+        return np.array(x), np.array(y), np.array(z), np.array(values)
     
     @staticmethod
-    @jit
     def get_2d_vis_data(V, scale, top_left, resolution=1):
-        x = np.zeros(V.size, float64)
-        y = np.zeros(V.size, float64)
-        values = np.zeros(V.size, float64)
-        sample = 1
-        n = 0
-        for i in range(V.shape[0]):
-            for j in range(V.shape[1]):
-                if sample >= resolution:
-                    x[n] = top_left[0] + (i / scale)
-                    y[n] = top_left[1] + (j / scale)
-                    values[n] = V[i,j]
-                    sample = 1
-                else:
-                    sample += 1
-                n += 1        
-        return x, y, values
+        """
+        Pull a subset of points from the array V to use in a 2D visualization.
+        """
+        x = []
+        y = []
+        values = []
+        
+        for pt, value in np.ndenumerate(V[::resolution,::resolution]):
+            loc = ((np.array(pt) * resolution) / scale) + top_left
+            x.append(loc[0])
+            y.append(loc[1])
+            values.append(value)
+        
+        return np.array(x), np.array(y), np.array(values)
     
     @staticmethod
     def colormesh_3d(sim, size=(10, 10), color_norm="auto", resolution="auto", graph_ax=None):
+        """
+        Show the potential sim.V as a shaded color-coded map, where negative velocities are red
+        and positive velocitues are blue.
+        Parameters:
+         - sim: EMSimulationSpace3D instance.
+         - size: the figure size of the plot.
+         - color_norm: the voltage to use as the maximum for the color display, defaults to largest abs(V[i,j,k]).
+         - resolution: how many points to skip when sampling in each direction, defaults to 1.
+         - graph_ax: existing graph axes to draw on/
+        Produces a plot, and shows it if no axes are provided.
+        """
         ax = None
         if graph_ax is None:
             plt.figure(figsize=size)
@@ -64,8 +75,7 @@ class Visualizations:
             ax = graph_ax
 
         if resolution == "auto":
-            resolution = max(int(np.average(size) / np.average(sim.space_size)), 1)
-            print("Set visualization resolution to", resolution)
+            resolution = 1
         x, y, z, values = Visualizations.get_3d_vis_data(sim.V, sim.scale, sim.top_left, resolution)
 
         cmap = plt.cm.RdBu if V_COLORS == "RdBu" else plt.cm.inferno
@@ -89,6 +99,18 @@ class Visualizations:
         
     @staticmethod
     def color_xsections_3d(sim3d, ax_loc, size=(10, 10), color_norm="auto", resolution="auto", graph_ax=None):
+        """
+        Show two-dimensional cross-sections of the potential sim.V as a shaded color-coded map, 
+        where negative velocities are red and positive velocitues are blue.
+        Parameters:
+         - sim: EMSimulationSpace3D instance.
+         - ax_loc: tuples of (axis_id, location) to take cross sections at. See EMSimulationSpace2D.from_3d
+         - size: the figure size of the plot.
+         - color_norm: the voltage to use as the maximum for the color display, defaults to largest abs(V[i,j,k]).
+         - resolution: how many points to skip when sampling in each direction, defaults to 1.
+         - graph_ax: existing graph axes to draw on/
+        Produces a plot, and shows it if no axes are provided.
+        """
         graph_V = np.zeros(sim3d.V.shape, float)
         for axis, location in ax_loc:
             sim2d = libem.EMSimulationSpace2D.from_3d(sim3d, axis, location)
@@ -108,6 +130,17 @@ class Visualizations:
         
     @staticmethod
     def colormesh_2d(sim, size=(10, 10), color_norm="auto", graph_ax=None):
+        """
+        Show the potential sim.V as a shaded color-coded map, where negative velocities are red
+        and positive velocitues are blue.
+        Parameters:
+         - sim: EMSimulationSpace2D instance.
+         - size: the figure size of the plot.
+         - color_norm: the voltage to use as the maximum for the color display, defaults to largest abs(V[i,j]).
+         - resolution: how many points to skip when sampling in each direction, defaults to 1.
+         - graph_ax: existing graph axes to draw on/
+        Produces a plot, and shows it if no axes are provided.
+        """
         fig = None
         ax = None
         if graph_ax is None:
@@ -133,6 +166,14 @@ class Visualizations:
         
     @staticmethod
     def contour_2d(sim, size=(10, 10), graph_ax=None):
+        """
+        Show contour lines of the potential of a two-dimensional simulation.
+        Parameters:
+         - sim: EMSimulationSpace2D instance.
+         - size: the figure size of the plot.
+         - graph_ax: existing graph axes to draw on.
+        Produces a plot, and shows it if no axes are provided.
+        """
         fig = None
         ax = None
         if graph_ax is None:
@@ -167,6 +208,15 @@ class Visualizations:
 
     @staticmethod
     def efield_3d(sim3d, size=(10, 10), resolution="auto", graph_ax=None):
+        """
+        Show the electric field E as three-dimensional arrows in space.
+        Parameters:
+         - sim3d: EMSimulationSpace3D instance.
+         - size: the figure size of the plot.
+         - resolution: how many points to skip when sampling in each direction, defaults to 1.
+         - graph_ax: existing graph axes to draw on/
+        Produces a plot, and shows it if no axes are provided.
+        """
         ax = None
         if graph_ax is None:
             plt.figure(figsize=size)
@@ -175,8 +225,7 @@ class Visualizations:
             ax = graph_ax
             
         if resolution == "auto":
-            resolution = max(int((np.average(size) * sim3d.scale) / (3 * np.average(sim3d.space_size))), 10)
-            print("Set visualization resolution to", resolution)
+            resolution = 1
         
         E_x, E_y, E_z = sim3d.get_efield()
         
@@ -194,6 +243,15 @@ class Visualizations:
         
     @staticmethod
     def efield_2d(sim2d, size=(10, 10), graph_ax=None):
+        """
+        Show the electric field E as two-dimensional arrows in space.
+        Parameters:
+         - sim2d: EMSimulationSpace2D instance.
+         - size: the figure size of the plot.
+         - resolution: how many points to skip when sampling in each direction, defaults to 1.
+         - graph_ax: existing graph axes to draw on/
+        Produces a plot, and shows it if no axes are provided.
+        """
         fig = None
         ax = None
         if graph_ax is None:
@@ -216,6 +274,15 @@ class Visualizations:
             
     @staticmethod
     def trajectory_3d(time, x, size=(10, 10), graph_ax=None):
+        """
+        Show the trajectory of a particle in three-dimensional space.
+        Parameters:
+         - time: arrays representing N time indices.
+         - x: 3xN array of particle X, Y, Z position
+         - size: the figure size of the plot.
+         - graph_ax: existing graph axes to draw on/
+        Produces a plot, and shows it if no axes are provided.
+        """
         ax = None
         if graph_ax is None:
             plt.figure(figsize=size)
@@ -230,6 +297,16 @@ class Visualizations:
             
     @staticmethod
     def trajectory_2d(time, x3d, axis=0, size=(10, 10), graph_ax=None):
+        """
+        Show the trajectory of a particle in two-dimensional space.
+        Parameters:
+         - time: arrays representing N time indices.
+         - x: 3xN array of particle X, Y, Z position
+         - axis: which component of the motion to not display (slice across).
+         - size: the figure size of the plot.
+         - graph_ax: existing graph axes to draw on/
+        Produces a plot, and shows it if no axes are provided.
+        """
         ax = None
         if graph_ax is None:
             plt.figure(figsize=size)
@@ -246,6 +323,14 @@ class Visualizations:
             
 class VideoMaker(object):
     def __init__(self, figure, axes, videoDir=None, framerate=1):
+        """
+        Utility to create a video from successive Matplotlib figures.
+        Parameters:
+         - figure: the matplotlib Figure object which is updated.
+         - axes: the collection of matplotlib Axes objects that are drawn to.
+         - videoDir: the temporary directory to store video frames in and export to.
+         - framerate: how many frames per second.
+        """
         self.fig = figure
         self.axes = np.array(axes)
         self.framerate = framerate
@@ -258,16 +343,27 @@ class VideoMaker(object):
         os.mkdir(self.videoDir)
         
     def new_frame(self):
+        """
+        Called before the plot is updated. Clears the axes.
+        """
         self.curr_frame += 1
         for axis in self.axes.flatten():
             axis.clear()
             
     def draw_frame(self, save=True):
+        """
+        Called after the plot is updated. Draws the canvas and saves the frame to a file.
+        Parameter:
+         - save: whether to save the file.
+        """
         self.fig.canvas.draw()
         if save:
             plt.savefig(os.path.join(self.videoDir, "frame{:03d}.png".format(self.curr_frame)))
         
     def make_movie(self, name="movie.mp4"):
+        """
+        Invokes FFMPEG to generate a mp4 file from the frames.
+        """
         cwd = os.getcwd()
         os.chdir(self.videoDir)
         os.system("ffmpeg -framerate {} -i frame%03d.png -r 24 -pix_fmt yuv420p {}".format(self.framerate, name))
