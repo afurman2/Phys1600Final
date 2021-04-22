@@ -443,7 +443,7 @@ class ChargedParticle(object):
         stop_events = ([term_event] if not self.bounce is None else []) + ([stop_cond] if not stop_cond is None else [])
         return solve_ivp(self.eom, t_span,
                          y0=np.ravel([self.initial_location, self.initial_velocity]),
-                         method="DOP853", max_step=(min(self.sim.space_size) / 10.0),
+                         method="DOP853", max_step=(min(self.sim.space_size) / 20.0),
                          events=stop_events)
     
 
